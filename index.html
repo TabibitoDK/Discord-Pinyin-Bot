@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Chinese to Pinyin Converter</title>
+  <script src="https://cdn.jsdelivr.net/npm/pinyin4js@1.3.18/dist/pinyin4js.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    textarea {
+      width: 100%;
+      height: 100px;
+      font-size: 1.2em;
+    }
+    .output {
+      margin-top: 20px;
+      font-size: 1.5em;
+      color: #333;
+    }
+    .output ruby {
+  font-size: 20px; /* Make base text bigger */
+    }
+    .output rt {
+    font-size: 10px;  /* Make annotation bigger */
+    }
+  </style>
+</head>
+<body>
+  <div class="output" id="pinyinOutput"></div>
+  <script>
+    function convertToPinyin() {
+      const text = "早上好中国";
+      const pinyin = PinyinHelper.convertToPinyinString(
+        text,
+        ' ', // separator
+        PinyinFormat.WITH_TONE_MARK // use WITH_TONE_MARK, or change to WITH_TONE_NUMBER
+      );
+      
+      document.getElementById('pinyinOutput').innerHTML = `
+      <ruby>
+            ${text}
+            <rp>(</rp><rt>${pinyin}</rt><rp>)</rp>
+      </ruby>
+      `;
+    }
+    convertToPinyin();
+  </script>
+
+</body>
+</html>
