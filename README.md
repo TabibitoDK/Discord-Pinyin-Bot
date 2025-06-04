@@ -1,11 +1,13 @@
 ---
-title: chinnese-pinyin-bot
-emoji: 🦙
-colorFrom: indigo
-colorTo: pink
+title: Chinese Pinyin Discord Bot
+emoji: 📈
+colorFrom: purple
+colorTo: green
 sdk: docker
 pinned: false
+license: mit
 ---
+
 # Chinese Pinyin Discord Bot
 
 A Discord bot that automatically processes Chinese text, generates pinyin pronunciation, translates to Japanese, and creates beautiful visual outputs.
