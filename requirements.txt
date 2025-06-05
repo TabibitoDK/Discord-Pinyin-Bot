@@ -1,6 +1,8 @@
 discord.py==2.3.2
-aiohttp==3.9.1
-selenium==4.15.2
-Pillow==10.1.0
+matplotlib==3.8.4
 pypinyin==0.49.0
-requests==2.31.0
+googletrans==4.0.0rc1
+flask==2.3.3
+numpy<2.0.0
+pillow>=9.0.0
+fonttools==4.53.1

@@ -1,57 +1,22 @@
-# Use Python 3.11 slim image
-FROM python:3.11-slim
+FROM python:3.9
 
-# Set working directory
-WORKDIR /app
+WORKDIR /code
 
-# Install system dependencies for Chrome and other requirements
+# Install system dependencies and CJK fonts
 RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
-    unzip \
-    curl \
-    xvfb \
+    fonts-noto-cjk \
+    fonts-noto-cjk-extra \
+    fonts-dejavu-core \
+    fontconfig \
+    && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 
-# Add Google Chrome repository and install Chrome
-RUN wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable \
-    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt /code/requirements.txt
 
-# Install ChromeDriver
-RUN CHROME_VERSION=$(google-chrome --version | cut -d " " -f3 | cut -d "." -f1-3) \
-    && CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") \
-    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" \
-    && unzip /tmp/chromedriver.zip -d /tmp/ \
-    && mv /tmp/chromedriver /usr/local/bin/chromedriver \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm /tmp/chromedriver.zip
+RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
 
-# Copy requirements first (for better Docker layer caching)
-COPY requirements.txt .
+COPY . /code
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+EXPOSE 7860
 
-# Copy application code
-COPY main.py .
-
-# Create non-root user for security
-RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
-USER botuser
-
-# Set environment variables
-ENV PYTHONUNBUFFERED=1
-ENV DISPLAY=:99
-
-# Expose port (optional, mainly for health checks)
-EXPOSE 8000
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
-
-# Start the bot
-CMD ["python", "main.py"]
+CMD ["python", "-u", "app.py"]
