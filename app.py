@@ -12,6 +12,7 @@ from flask import Flask
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.font_manager as fm
+import re
 
 # Set matplotlib cache directory to a writable location
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
@@ -67,8 +68,77 @@ def save_active_channels():
     except Exception as e:
         print(f"Error saving active channels: {e}")
 
-def get_pinyin_with_tone_marks(text):
-    return [py[0].replace("u:", "ü") for py in pinyin(text, style=Style.TONE)]
+def is_chinese_char(char):
+    """Check if a character is Chinese."""
+    return '\u4e00' <= char <= '\u9fff'
+
+def has_chinese_content(text):
+    """Check if text contains Chinese characters."""
+    return any(is_chinese_char(char) for char in text)
+
+def tokenize_text(text):
+    """Tokenize text into segments of Chinese characters and non-Chinese segments."""
+    segments = []
+    current_segment = ""
+    is_current_chinese = None
+    
+    for char in text:
+        char_is_chinese = is_chinese_char(char)
+        
+        if is_current_chinese is None:
+            # First character
+            current_segment = char
+            is_current_chinese = char_is_chinese
+        elif char_is_chinese == is_current_chinese:
+            # Same type as current segment
+            current_segment += char
+        else:
+            # Different type, start new segment
+            segments.append({
+                'text': current_segment,
+                'is_chinese': is_current_chinese
+            })
+            current_segment = char
+            is_current_chinese = char_is_chinese
+    
+    # Add the last segment
+    if current_segment:
+        segments.append({
+            'text': current_segment,
+            'is_chinese': is_current_chinese
+        })
+    
+    return segments
+
+def get_pinyin_for_segments(segments):
+    """Get pinyin for segments, only process Chinese segments."""
+    result_segments = []
+    
+    for segment in segments:
+        if segment['is_chinese']:
+            # Process Chinese characters
+            pinyin_list = []
+            for char in segment['text']:
+                py = pinyin(char, style=Style.TONE)
+                if py and py[0]:
+                    pinyin_list.append(py[0][0].replace("u:", "ü"))
+                else:
+                    pinyin_list.append(char)
+            
+            result_segments.append({
+                'original': segment['text'],
+                'pinyin': ' '.join(pinyin_list),
+                'is_chinese': True
+            })
+        else:
+            # Non-Chinese text, keep as is
+            result_segments.append({
+                'original': segment['text'],
+                'pinyin': segment['text'],
+                'is_chinese': False
+            })
+    
+    return result_segments
 
 def translate_chinese_to_japanese(text):
     translator = Translator()
@@ -80,42 +150,67 @@ def translate_chinese_to_japanese(text):
         return "Translation failed"
 
 def create_image(text):
+    """Create image for single line of text with proper mixed language handling."""
     if not text.strip():
         return None
     
     try:
-        pinyin_list = get_pinyin_with_tone_marks(text)
-        japanese_translation = translate_chinese_to_japanese(text)
+        # Check if text contains Chinese
+        if not has_chinese_content(text):
+            return None
         
-        # Create figure with appropriate size
-        fig_width = max(len(text) * 0.8, 4)
-        fig, ax = plt.subplots(figsize=(fig_width, 3))
+        # Tokenize text into segments
+        segments = tokenize_text(text.strip())
+        processed_segments = get_pinyin_for_segments(segments)
         
-        # Find a suitable font
-        font_prop = fm.FontProperties(family=['Noto Sans CJK SC', 'Noto Sans CJK JP', 'DejaVu Sans'])
+        # Get Japanese translation for the entire text
+        japanese_translation = translate_chinese_to_japanese(text.strip())
         
-        # Add Chinese characters and pinyin
-        for i, (char, py) in enumerate(zip(text, pinyin_list)):
-            x = i + 0.5
-            # Pinyin on top
-            ax.text(x, 0.7, py, fontsize=14, ha='center', va='bottom', 
-                   fontproperties=font_prop, weight='normal')
-            # Chinese character in middle
-            ax.text(x, 0.5, char, fontsize=20, ha='center', va='center', 
-                   fontproperties=font_prop, weight='bold')
+        # Calculate figure dimensions based on text length
+        text_length = len(text.strip())
+        fig_width = max(text_length * 0.6, 8)
+        fig_height = 6  # Fixed height for single line
         
-        # Japanese translation at bottom
-        ax.text(len(text)/2, 0.2, japanese_translation, fontsize=12, 
-               ha='center', va='top', color='blue', fontproperties=font_prop)
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
         
-        ax.set_xlim(0, len(text))
+        # Find suitable fonts
+        cjk_font = fm.FontProperties(family=['Noto Sans CJK SC', 'Noto Sans CJK JP'])
+        regular_font = fm.FontProperties(family=['DejaVu Sans', 'Arial'])
+        
+        # Create pinyin line by combining all segments
+        pinyin_line = ''.join(seg['pinyin'] for seg in processed_segments)
+        original_line = text.strip()
+        
+        # Center everything vertically
+        y_positions = {
+            'pinyin': 0.7,    # Top
+            'original': 0.5,  # Middle
+            'japanese': 0.3   # Bottom
+        }
+        
+        # Draw pinyin (top line)
+        ax.text(0.5, y_positions['pinyin'], pinyin_line, 
+               fontsize=16, ha='center', va='center', 
+               fontproperties=cjk_font, weight='normal')
+        
+        # Draw original text (middle line, bold)
+        ax.text(0.5, y_positions['original'], original_line, 
+               fontsize=22, ha='center', va='center', 
+               fontproperties=cjk_font, weight='bold')
+        
+        # Draw Japanese translation (bottom line)
+        ax.text(0.5, y_positions['japanese'], japanese_translation, 
+               fontsize=14, ha='center', va='center', 
+               color='blue', fontproperties=cjk_font)
+        
+        ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.axis('off')
         
-        # Save to bytes buffer
+        # Save to bytes buffer with tight layout
         buf = io.BytesIO()
         plt.savefig(buf, format='png', bbox_inches='tight', dpi=300, 
-                   facecolor='white', edgecolor='none')
+                   facecolor='white', edgecolor='none', pad_inches=0.3)
         plt.close()
         buf.seek(0)
         
@@ -330,7 +425,8 @@ async def help_command(ctx):
         value="1. Run `!init` in any channel\n"
               "2. Send Chinese text in that channel\n"
               "3. I'll reply with pinyin and Japanese translation!\n"
-              "4. Works across multiple servers and channels",
+              "4. Each line is processed separately\n"
+              "5. Works with mixed Chinese/English text",
         inline=False
     )
     
@@ -338,8 +434,9 @@ async def help_command(ctx):
         name="✨ Features",
         value="• Pinyin with tone marks\n"
               "• Japanese translation\n"
-              "• Multi-line text support\n"
-              "• Beautiful image output\n"
+              "• Mixed Chinese/English text support\n"
+              "• Proper punctuation handling\n"
+              "• Beautiful centered image output\n"
               "• Persistent channel memory\n"
               "• Cross-server support",
         inline=False
@@ -372,26 +469,31 @@ async def on_message(message):
     if not message.content.strip():
         return
     
+    # Check if message contains Chinese characters
+    if not has_chinese_content(message.content):
+        return
+    
     try:
-        # Split message by lines and process each line
-        lines = message.content.strip().split('\n')
+        # Split message by lines and process each line separately
+        lines = [line.strip() for line in message.content.strip().split('\n') if line.strip()]
         
         for line in lines:
-            line = line.strip()
-            if not line:  # Skip empty lines
-                continue
+            if has_chinese_content(line):
+                # Create image for this line
+                image_buffer = create_image(line)
                 
-            # Create image for this line
-            image_buffer = create_image(line)
-            
-            if image_buffer:
-                # Convert buffer to discord.File
-                file = discord.File(image_buffer, filename=f'pinyin_{line[:10]}.png')
-                
-                # Reply to the original message with the image
-                await message.reply(file=file)
-            else:
-                await message.reply(f"Sorry, couldn't process: {line}")
+                if image_buffer:
+                    # Convert buffer to discord.File
+                    file = discord.File(image_buffer, filename='pinyin_translation.png')
+                    
+                    # Reply to the original message with the image
+                    await message.reply(file=file)
+                    
+                    # Small delay between images to avoid rate limiting
+                    if len(lines) > 1:
+                        await asyncio.sleep(0.5)
+                else:
+                    await message.reply(f"Sorry, couldn't process: {line}")
                 
     except Exception as e:
         print(f"Error processing message: {e}")
