@@ -13,6 +13,8 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.font_manager as fm
 import re
+from google.cloud import firestore
+from google.oauth2 import service_account
 
 # Set matplotlib cache directory to a writable location
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
@@ -33,40 +35,204 @@ app = Flask(__name__)
 def health_check():
     return "Discord bot is running!"
 
+# Firestore setup - NO FALLBACK, MUST WORK
+def init_firestore():
+    """Initialize Firestore client - REQUIRED, no fallback."""
+    print("🔥 Initializing Firestore connection...")
+    
+    # Try to get credentials from environment variable (JSON string)
+    creds_json = os.getenv('GOOGLE_CLOUD_CREDENTIALS')
+    if creds_json:
+        print("📋 Found GOOGLE_CLOUD_CREDENTIALS environment variable")
+        try:
+            # Parse JSON string and create credentials
+            creds_dict = json.loads(creds_json)
+            print(f"📝 Parsed credentials for project: {creds_dict.get('project_id', 'UNKNOWN')}")
+            credentials = service_account.Credentials.from_service_account_info(creds_dict)
+            db = firestore.Client(credentials=credentials, project=creds_dict.get('project_id'))
+            print("✅ Firestore initialized with credentials from environment variable")
+            
+            # Test connection by trying to access a collection
+            try:
+                test_ref = db.collection('connection_test').document('test')
+                test_ref.set({'test': True, 'timestamp': firestore.SERVER_TIMESTAMP})
+                print("✅ Firestore connection test successful - can write to database")
+                test_ref.delete()  # Clean up test document
+                return db
+            except Exception as test_error:
+                print(f"❌ Firestore connection test FAILED: {test_error}")
+                raise Exception(f"Firestore connection test failed: {test_error}")
+            
+        except json.JSONDecodeError as json_error:
+            print(f"❌ GOOGLE_CLOUD_CREDENTIALS is not valid JSON: {json_error}")
+            raise Exception(f"Invalid GOOGLE_CLOUD_CREDENTIALS JSON: {json_error}")
+        except Exception as creds_error:
+            print(f"❌ Error creating Firestore credentials: {creds_error}")
+            raise Exception(f"Firestore credentials error: {creds_error}")
+    
+    # Try service account key file
+    key_path = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if key_path:
+        print(f"📁 Found GOOGLE_APPLICATION_CREDENTIALS: {key_path}")
+        if not os.path.exists(key_path):
+            print(f"❌ Service account key file does not exist: {key_path}")
+            raise FileNotFoundError(f"Service account key file not found: {key_path}")
+        
+        try:
+            db = firestore.Client.from_service_account_json(key_path)
+            print("✅ Firestore initialized with service account key file")
+            
+            # Test connection
+            try:
+                test_ref = db.collection('connection_test').document('test')
+                test_ref.set({'test': True, 'timestamp': firestore.SERVER_TIMESTAMP})
+                print("✅ Firestore connection test successful - can write to database")
+                test_ref.delete()  # Clean up test document
+                return db
+            except Exception as test_error:
+                print(f"❌ Firestore connection test FAILED: {test_error}")
+                raise Exception(f"Firestore connection test failed: {test_error}")
+                
+        except Exception as key_error:
+            print(f"❌ Error initializing Firestore with key file: {key_error}")
+            raise Exception(f"Firestore key file error: {key_error}")
+    
+    # Try default credentials (for Google Cloud environments)
+    print("🔍 Trying default Google Cloud credentials...")
+    try:
+        db = firestore.Client()
+        print("✅ Firestore initialized with default credentials")
+        
+        # Test connection
+        try:
+            test_ref = db.collection('connection_test').document('test')
+            test_ref.set({'test': True, 'timestamp': firestore.SERVER_TIMESTAMP})
+            print("✅ Firestore connection test successful - can write to database")
+            test_ref.delete()  # Clean up test document
+            return db
+        except Exception as test_error:
+            print(f"❌ Firestore connection test FAILED: {test_error}")
+            raise Exception(f"Firestore connection test failed: {test_error}")
+            
+    except Exception as default_error:
+        print(f"❌ Error with default credentials: {default_error}")
+    
+    # NO FALLBACK - RAISE ERROR
+    error_msg = """
+❌ FIRESTORE CONNECTION FAILED ❌
+
+No valid Firestore credentials found! You must set up one of:
+
+1. GOOGLE_CLOUD_CREDENTIALS environment variable (recommended for Hugging Face)
+   - Set this to the complete JSON content of your service account key
+
+2. GOOGLE_APPLICATION_CREDENTIALS environment variable
+   - Set this to the path of your service account key file
+
+3. Default Google Cloud credentials (for GCP environments)
+
+SETUP INSTRUCTIONS:
+1. Go to Firebase Console: https://console.firebase.google.com/
+2. Create a project and enable Firestore
+3. Generate a service account key (JSON)
+4. Add GOOGLE_CLOUD_CREDENTIALS secret with the JSON content
+
+Current environment:
+- GOOGLE_CLOUD_CREDENTIALS: {'SET' if creds_json else 'NOT SET'}
+- GOOGLE_APPLICATION_CREDENTIALS: {key_path if key_path else 'NOT SET'}
+
+Bot cannot start without Firestore connection!
+"""
+    print(error_msg)
+    raise Exception("Firestore connection required but failed to initialize")
+
+# Initialize Firestore - REQUIRED
+print("🚀 Starting Firestore initialization...")
+db = init_firestore()
+print("🎉 Firestore successfully connected!")
+
 # Store active channels (guild_id, channel_id) pairs
 active_channels = set()
-CHANNELS_FILE = 'active_channels.json'
+CHANNELS_COLLECTION = 'active_channels'
+CHANNELS_DOCUMENT = 'channels_data'
 
-def load_active_channels():
-    """Load active channels from JSON file."""
+async def load_active_channels():
+    """Load active channels from Firestore - REQUIRED."""
     global active_channels
+    
+    print("📥 Loading active channels from Firestore...")
+    
     try:
-        if os.path.exists(CHANNELS_FILE):
-            with open(CHANNELS_FILE, 'r') as f:
-                data = json.load(f)
-                # Convert list of lists back to set of tuples
-                active_channels = set(tuple(channel) for channel in data.get('channels', []))
-                print(f"Loaded {len(active_channels)} active channels from {CHANNELS_FILE}")
+        # Load from Firestore
+        doc_ref = db.collection(CHANNELS_COLLECTION).document(CHANNELS_DOCUMENT)
+        doc = doc_ref.get()
+        
+        if doc.exists:
+            data = doc.to_dict()
+            channels_data = data.get('channels', [])
+            # Convert list of lists back to set of tuples
+            active_channels = set(tuple(channel) for channel in channels_data)
+            print(f"✅ Loaded {len(active_channels)} active channels from Firestore")
         else:
             active_channels = set()
-            print(f"No existing {CHANNELS_FILE} found, starting with empty channel list")
+            print("📝 No existing channels document in Firestore, starting with empty channel list")
+            # Create initial empty document
+            doc_ref.set({
+                'channels': [],
+                'last_updated': firestore.SERVER_TIMESTAMP,
+                'total_channels': 0
+            })
+            print("✅ Created initial empty channels document in Firestore")
+            
     except Exception as e:
-        print(f"Error loading active channels: {e}")
-        active_channels = set()
+        print(f"❌ CRITICAL ERROR loading active channels from Firestore: {e}")
+        raise Exception(f"Failed to load channels from Firestore: {e}")
 
-def save_active_channels():
-    """Save active channels to JSON file."""
+async def save_active_channels():
+    """Save active channels to Firestore - REQUIRED."""
+    
+    print(f"💾 Saving {len(active_channels)} active channels to Firestore...")
+    
     try:
-        # Convert set of tuples to list of lists for JSON serialization
+        # Save to Firestore
+        doc_ref = db.collection(CHANNELS_COLLECTION).document(CHANNELS_DOCUMENT)
+        
         data = {
             'channels': [list(channel) for channel in active_channels],
-            'last_updated': discord.utils.utcnow().isoformat()
+            'last_updated': firestore.SERVER_TIMESTAMP,
+            'total_channels': len(active_channels)
         }
-        with open(CHANNELS_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-        print(f"Saved {len(active_channels)} active channels to {CHANNELS_FILE}")
+        
+        doc_ref.set(data)
+        print(f"✅ Successfully saved {len(active_channels)} active channels to Firestore")
+        
     except Exception as e:
-        print(f"Error saving active channels: {e}")
+        print(f"❌ CRITICAL ERROR saving active channels to Firestore: {e}")
+        raise Exception(f"Failed to save channels to Firestore: {e}")
+
+async def create_backup():
+    """Create a backup of active channels in Firestore - REQUIRED."""
+    
+    print("🔄 Creating Firestore backup...")
+    
+    try:
+        # Create backup collection with timestamp
+        backup_id = discord.utils.utcnow().strftime("%Y%m%d_%H%M%S")
+        backup_ref = db.collection('channel_backups').document(backup_id)
+        
+        data = {
+            'channels': [list(channel) for channel in active_channels],
+            'backup_date': firestore.SERVER_TIMESTAMP,
+            'total_channels': len(active_channels)
+        }
+        
+        backup_ref.set(data)
+        print(f"✅ Successfully created backup {backup_id} with {len(active_channels)} channels")
+        return backup_id
+        
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR creating Firestore backup: {e}")
+        raise Exception(f"Failed to create Firestore backup: {e}")
 
 def is_chinese_char(char):
     """Check if a character is Chinese."""
@@ -226,14 +392,24 @@ bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)  # Di
 
 @bot.event
 async def on_ready():
-    print(f'{bot.user} has connected to Discord!')
-    print(f'Bot is in {len(bot.guilds)} guilds')
+    print(f'🤖 {bot.user} has connected to Discord!')
+    print(f'🏠 Bot is in {len(bot.guilds)} guilds')
     
-    # Load active channels from file
-    load_active_channels()
+    # Load active channels from Firestore
+    try:
+        await load_active_channels()
+        print(f"📋 Successfully loaded channel data")
+    except Exception as e:
+        print(f"❌ CRITICAL: Failed to load channels: {e}")
+        raise e
     
     # Clean up invalid channels (channels that no longer exist)
-    await cleanup_invalid_channels()
+    try:
+        await cleanup_invalid_channels()
+        print(f"🧹 Channel cleanup completed")
+    except Exception as e:
+        print(f"❌ CRITICAL: Failed to cleanup channels: {e}")
+        raise e
 
 async def cleanup_invalid_channels():
     """Remove channels that no longer exist or bot no longer has access to."""
@@ -262,8 +438,13 @@ async def cleanup_invalid_channels():
         for channel_key in invalid_channels:
             active_channels.discard(channel_key)
         
-        print(f"Cleaned up {len(invalid_channels)} invalid channels")
-        save_active_channels()
+        print(f"🧹 Cleaned up {len(invalid_channels)} invalid channels")
+        try:
+            await save_active_channels()
+            print(f"✅ Successfully saved cleanup results to Firestore")
+        except Exception as e:
+            print(f"❌ CRITICAL: Failed to save cleanup results: {e}")
+            raise e
 
 @bot.command(name='init')
 async def init_channel(ctx):
@@ -281,8 +462,16 @@ async def init_channel(ctx):
     # Add channel to active channels
     active_channels.add(channel_key)
     
-    # Save to file
-    save_active_channels()
+    # Save to Firestore
+    try:
+        await save_active_channels()
+        print(f"✅ Successfully saved new channel to Firestore")
+    except Exception as e:
+        print(f"❌ CRITICAL: Failed to save channel: {e}")
+        # Remove from memory since save failed
+        active_channels.discard(channel_key)
+        await ctx.send(f"❌ **Critical Error**: Failed to save channel to Firestore!\n```{str(e)}```")
+        return
     
     guild_name = ctx.guild.name if ctx.guild else "DM"
     channel_name = ctx.channel.name if hasattr(ctx.channel, 'name') else "DM"
@@ -293,7 +482,8 @@ async def init_channel(ctx):
         title="✅ Channel Initialized!",
         description=f"This channel is now active for pinyin functionality.\n\n"
                    f"**Server:** {guild_name}\n"
-                   f"**Channel:** #{channel_name}\n\n"
+                   f"**Channel:** #{channel_name}\n"
+                   f"**Storage:** Firestore ☁️\n\n"
                    f"You can now send Chinese text and I'll respond with pinyin and Japanese translation!",
         color=0x00ff00
     )
@@ -315,8 +505,16 @@ async def remove_channel(ctx):
     # Remove channel from active channels
     active_channels.remove(channel_key)
     
-    # Save to file
-    save_active_channels()
+    # Save to Firestore
+    try:
+        await save_active_channels()
+        print(f"✅ Successfully removed channel from Firestore")
+    except Exception as e:
+        print(f"❌ CRITICAL: Failed to remove channel: {e}")
+        # Add back to memory since save failed
+        active_channels.add(channel_key)
+        await ctx.send(f"❌ **Critical Error**: Failed to remove channel from Firestore!\n```{str(e)}```")
+        return
     
     guild_name = ctx.guild.name if ctx.guild else "DM"
     channel_name = ctx.channel.name if hasattr(ctx.channel, 'name') else "DM"
@@ -339,7 +537,9 @@ async def status(ctx):
     if not active_channels:
         embed = discord.Embed(
             title="📊 Pinyin Bot Status",
-            description="No channels are currently active for pinyin functionality.\n\nUse `!init` in any channel to activate it!",
+            description=f"No channels are currently active for pinyin functionality.\n\n"
+                       f"**Storage:** Firestore ☁️\n\n"
+                       f"Use `!init` in any channel to activate it!",
             color=0xffa500
         )
         await ctx.send(embed=embed)
@@ -361,43 +561,36 @@ async def status(ctx):
     
     embed = discord.Embed(
         title="📊 Pinyin Bot Status",
-        description=f"**Active Channels ({len(active_channels)}):**\n\n" + "\n".join(status_lines),
+        description=f"**Active Channels ({len(active_channels)}):**\n\n" + "\n".join(status_lines) + f"\n\n**Storage:** Firestore ☁️",
         color=0x4CAF50
     )
     await ctx.send(embed=embed)
 
 @bot.command(name='backup')
 async def backup_channels(ctx):
-    """Create a backup of active channels (Admin only)."""
+    """Create a backup of active channels."""
     # Check if user has admin permissions
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("❌ You need administrator permissions to use this command.")
         return
     
     try:
-        backup_filename = f'channels_backup_{discord.utils.utcnow().strftime("%Y%m%d_%H%M%S")}.json'
-        
-        data = {
-            'channels': [list(channel) for channel in active_channels],
-            'backup_date': discord.utils.utcnow().isoformat(),
-            'total_channels': len(active_channels)
-        }
-        
-        with open(backup_filename, 'w') as f:
-            json.dump(data, f, indent=2)
-        
+        # Create Firestore backup
+        backup_id = await create_backup()
         embed = discord.Embed(
-            title="💾 Backup Created!",
+            title="☁️ Firestore Backup Created!",
             description=f"Successfully created backup with {len(active_channels)} channels.\n\n"
-                       f"**Backup file:** `{backup_filename}`",
+                       f"**Backup ID:** `{backup_id}`\n"
+                       f"**Storage:** Firestore ☁️",
             color=0x00ff00
         )
         await ctx.send(embed=embed)
         
     except Exception as e:
+        print(f"❌ CRITICAL: Backup failed: {e}")
         embed = discord.Embed(
             title="❌ Backup Failed!",
-            description=f"Error creating backup: {str(e)}",
+            description=f"**Critical Error**: Failed to create Firestore backup!\n```{str(e)}```",
             color=0xff0000
         )
         await ctx.send(embed=embed)
@@ -405,9 +598,10 @@ async def backup_channels(ctx):
 @bot.command(name='help')
 async def help_command(ctx):
     """Show help information."""
+    
     embed = discord.Embed(
         title="🤖 Pinyin Bot Help",
-        description="I help you learn Chinese by providing pinyin and Japanese translations!",
+        description=f"I help you learn Chinese by providing pinyin and Japanese translations!\n\n**Storage:** Firestore ☁️ (Required)",
         color=0x3498db
     )
     
@@ -437,7 +631,7 @@ async def help_command(ctx):
               "• Mixed Chinese/English text support\n"
               "• Proper punctuation handling\n"
               "• Beautiful centered image output\n"
-              "• Persistent channel memory\n"
+              "• Cloud storage with Firestore (REQUIRED)\n"
               "• Cross-server support",
         inline=False
     )
@@ -506,18 +700,30 @@ def run_bot():
     # Get Discord token from environment variable
     token = os.getenv('DISCORD_TOKEN')
     if not token:
-        print("ERROR: DISCORD_TOKEN environment variable not set!")
-        return
+        error_msg = """
+❌ DISCORD TOKEN MISSING ❌
+
+DISCORD_TOKEN environment variable not set!
+
+Please set your Discord bot token in the environment variables.
+"""
+        print(error_msg)
+        raise Exception("DISCORD_TOKEN environment variable not set!")
     
     try:
+        print("🚀 Starting Discord bot...")
         bot.run(token)
     except Exception as e:
-        print(f"Error running bot: {e}")
+        print(f"❌ CRITICAL ERROR running bot: {e}")
+        raise e
 
 if __name__ == "__main__":
+    print("🔥 Starting Chinese Pinyin Discord Bot (Firestore Required)")
+    
     # Start Flask server in a separate thread for Hugging Face Spaces health check
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
+    print("🌐 Flask health check server started")
     
     # Run the Discord bot
     run_bot()
