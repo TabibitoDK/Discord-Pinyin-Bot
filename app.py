@@ -49,7 +49,7 @@ def init_firestore():
             creds_dict = json.loads(creds_json)
             print(f"📝 Parsed credentials for project: {creds_dict.get('project_id', 'UNKNOWN')}")
             credentials = service_account.Credentials.from_service_account_info(creds_dict)
-            db = firestore.Client(credentials=credentials, project=creds_dict.get('project_id'))
+            db = firestore.Client(database='pinyinbotchannels', credentials=credentials, project=creds_dict.get('project_id'))
             print("✅ Firestore initialized with credentials from environment variable")
             
             # Test connection by trying to access a collection
@@ -159,19 +159,25 @@ CHANNELS_DOCUMENT = 'channels_data'
 async def load_active_channels():
     """Load active channels from Firestore - REQUIRED."""
     global active_channels
-    
+
     print("📥 Loading active channels from Firestore...")
-    
+
     try:
         # Load from Firestore
         doc_ref = db.collection(CHANNELS_COLLECTION).document(CHANNELS_DOCUMENT)
         doc = doc_ref.get()
-        
+
         if doc.exists:
             data = doc.to_dict()
             channels_data = data.get('channels', [])
-            # Convert list of lists back to set of tuples
-            active_channels = set(tuple(channel) for channel in channels_data)
+
+            # Convert list of dicts back to set of tuples
+            active_channels = set(
+                (channel.get('guild_id'), channel.get('channel_id'))
+                for channel in channels_data
+                if channel is not None and 'guild_id' in channel and 'channel_id' in channel
+            )
+
             print(f"✅ Loaded {len(active_channels)} active channels from Firestore")
         else:
             active_channels = set()
@@ -183,32 +189,37 @@ async def load_active_channels():
                 'total_channels': 0
             })
             print("✅ Created initial empty channels document in Firestore")
-            
+
     except Exception as e:
         print(f"❌ CRITICAL ERROR loading active channels from Firestore: {e}")
         raise Exception(f"Failed to load channels from Firestore: {e}")
 
+
 async def save_active_channels():
     """Save active channels to Firestore - REQUIRED."""
-    
+
     print(f"💾 Saving {len(active_channels)} active channels to Firestore...")
-    
+
     try:
         # Save to Firestore
         doc_ref = db.collection(CHANNELS_COLLECTION).document(CHANNELS_DOCUMENT)
-        
+
         data = {
-            'channels': [list(channel) for channel in active_channels],
+            'channels': [
+                {'guild_id': channel[0], 'channel_id': channel[1]}
+                for channel in active_channels
+            ],
             'last_updated': firestore.SERVER_TIMESTAMP,
             'total_channels': len(active_channels)
         }
-        
+
         doc_ref.set(data)
         print(f"✅ Successfully saved {len(active_channels)} active channels to Firestore")
-        
+
     except Exception as e:
         print(f"❌ CRITICAL ERROR saving active channels to Firestore: {e}")
         raise Exception(f"Failed to save channels to Firestore: {e}")
+
 
 async def create_backup():
     """Create a backup of active channels in Firestore - REQUIRED."""
