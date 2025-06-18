@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y \
     fonts-noto-cjk-extra \
     fonts-dejavu-core \
     fontconfig \
+    ffmpeg \
     && fc-cache -fv \
     && rm -rf /var/lib/apt/lists/*
 

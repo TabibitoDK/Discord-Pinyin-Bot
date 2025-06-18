@@ -15,6 +15,9 @@ import matplotlib.font_manager as fm
 import re
 from google.cloud import firestore
 from google.oauth2 import service_account
+from gtts import gTTS
+from pydub import AudioSegment
+import tempfile
 
 # Set matplotlib cache directory to a writable location
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
@@ -691,8 +694,11 @@ async def on_message(message):
                     # Convert buffer to discord.File
                     file = discord.File(image_buffer, filename='pinyin_translation.png')
                     
-                    # Reply to the original message with the image
-                    await message.reply(file=file)
+                    # Create view with button
+                    view = AudioButtonView(line)
+
+                    # Reply to the original message with the image and button
+                    await message.reply(file=file, view=view)
                     
                     # Small delay between images to avoid rate limiting
                     if len(lines) > 1:
@@ -703,6 +709,57 @@ async def on_message(message):
     except Exception as e:
         print(f"Error processing message: {e}")
         await message.reply("Sorry, there was an error processing your message.")
+
+
+class AudioButtonView(discord.ui.View):
+    def __init__(self, chinese_text):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.chinese_text = chinese_text
+    
+    @discord.ui.button(label='🔊 Play Audio', style=discord.ButtonStyle.primary)
+    async def play_audio(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        
+        # Generate audio
+        audio_path = create_audio(self.chinese_text)
+        
+        if audio_path:
+            try:
+                # Send audio file
+                with open(audio_path, 'rb') as audio_file:
+                    discord_file = discord.File(audio_file, filename='chinese_audio.mp3')
+                    await interaction.followup.send(file=discord_file)
+                
+                # Clean up temporary file
+                os.unlink(audio_path)
+                
+            except Exception as e:
+                await interaction.followup.send("Sorry, couldn't generate audio.", ephemeral=True)
+        else:
+            await interaction.followup.send("Sorry, couldn't generate audio.", ephemeral=True)
+
+
+def create_audio(text):
+    """Create audio file for Chinese text."""
+    try:
+        # Extract only Chinese characters for TTS
+        chinese_only = ''.join(char for char in text if is_chinese_char(char))
+        
+        if not chinese_only:
+            return None
+            
+        # Create TTS audio
+        tts = gTTS(text=chinese_only, lang='zh-cn', slow=False)
+        
+        # Save to temporary file
+        with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+            tts.save(temp_file.name)
+            return temp_file.name
+            
+    except Exception as e:
+        print(f"Error creating audio: {e}")
+        return None
+
 
 def run_flask():
     app.run(host='0.0.0.0', port=7860)
