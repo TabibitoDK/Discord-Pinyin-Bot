@@ -699,7 +699,7 @@ async def on_message(message):
                     file = discord.File(image_buffer, filename='pinyin_translation.png')
                     
                     # Create view with button
-                    view = AudioButtonView(line)
+                    view = AudioButtonView()
 
                     # Reply to the original message with the image and button
                     await message.reply(file=file, view=view)
@@ -735,30 +735,17 @@ class AudioButtonView(discord.ui.View):
             # Get the first attachment (should be our PNG image)
             attachment = message.attachments[0]
             
-            # Verify it's a PNG file
-            if not attachment.filename.lower().endswith('.png'):
-                await interaction.followup.send("Expected PNG image attachment.", ephemeral=True)
-                return
-            
             # Download the image bytes
             image_bytes = await attachment.read()
             
             # Extract Chinese text from PNG metadata
             try:
-                from PIL import Image
-                import io
-                
-                # Open image from bytes
                 img = Image.open(io.BytesIO(image_bytes))
-                
-                # Extract the chinese_text from PNG info/metadata
                 chinese_text = img.info.get('chinese_text', '')
                 
                 if not chinese_text:
                     await interaction.followup.send("Could not find Chinese text in image metadata.", ephemeral=True)
                     return
-                
-                print(f"Extracted Chinese text from image: {chinese_text}")
                 
             except Exception as e:
                 print(f"Error reading image metadata: {e}")
@@ -779,14 +766,15 @@ class AudioButtonView(discord.ui.View):
                     os.unlink(audio_path)
                     
                 except Exception as e:
-                    print(f"Error sending audio file: {e}")
-                    await interaction.followup.send("Sorry, couldn't send audio file.", ephemeral=True)
+                    await interaction.followup.send("Sorry, couldn't generate audio.", ephemeral=True)
             else:
                 await interaction.followup.send("Sorry, couldn't generate audio.", ephemeral=True)
                 
         except Exception as e:
             print(f"Error in play_audio: {e}")
             await interaction.followup.send("Sorry, there was an error generating audio.", ephemeral=True)
+
+
 def create_audio(text):
     """Create audio file for Chinese text."""
     try:
