@@ -18,8 +18,8 @@ from google.oauth2 import service_account
 from gtts import gTTS
 from pydub import AudioSegment
 import tempfile
-import base64
-
+from PIL import Image
+import io
 
 # Set matplotlib cache directory to a writable location
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
@@ -394,7 +394,7 @@ def create_image(text):
         plt.savefig(buf, format='png', bbox_inches='tight', dpi=300, 
            facecolor='white', edgecolor='none', pad_inches=0.3,
            metadata={'chinese_text': original_line})
-        
+           
         plt.close()
         buf.seek(0)
         
@@ -696,15 +696,10 @@ async def on_message(message):
                 
                 if image_buffer:
                     # Convert buffer to discord.File
-                    import base64
-                    encoded_text = base64.b64encode(line.encode('utf-8')).decode('ascii')
-                    filename = f'pinyin_{encoded_text}.png'
-
-                    # Convert buffer to discord.File
-                    file = discord.File(image_buffer, filename=filename)
-
-                    # Create view with button (no parameters needed)
-                    view = AudioButtonView()
+                    file = discord.File(image_buffer, filename='pinyin_translation.png')
+                    
+                    # Create view with button
+                    view = AudioButtonView(line)
 
                     # Reply to the original message with the image and button
                     await message.reply(file=file, view=view)
@@ -722,7 +717,7 @@ async def on_message(message):
 
 class AudioButtonView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)  # No timeout since we're reading from filename
+        super().__init__(timeout=None)  # No timeout since we're reading from image
     
     @discord.ui.button(label='🔊 Play Audio', style=discord.ButtonStyle.primary)
     async def play_audio(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -734,23 +729,43 @@ class AudioButtonView(discord.ui.View):
             
             # Check if message has attachments
             if not message.attachments:
-                await interaction.followup.send("No image found.", ephemeral=True)
+                await interaction.followup.send("No image found to extract text from.", ephemeral=True)
                 return
             
-            # Get the filename from the attachment
-            filename = message.attachments[0].filename
+            # Get the first attachment (should be our PNG image)
+            attachment = message.attachments[0]
             
-            # Extract encoded text from filename
-            if not filename.startswith('pinyin_') or not filename.endswith('.png'):
-                await interaction.followup.send("Invalid image format.", ephemeral=True)
+            # Verify it's a PNG file
+            if not attachment.filename.lower().endswith('.png'):
+                await interaction.followup.send("Expected PNG image attachment.", ephemeral=True)
                 return
             
-            # Decode the Chinese text from filename
-            import base64
-            encoded_text = filename[7:-4]  # Remove 'pinyin_' prefix and '.png' suffix
-            chinese_text = base64.b64decode(encoded_text.encode('ascii')).decode('utf-8')
+            # Download the image bytes
+            image_bytes = await attachment.read()
             
-            # Generate audio using extracted text
+            # Extract Chinese text from PNG metadata
+            try:
+                from PIL import Image
+                import io
+                
+                # Open image from bytes
+                img = Image.open(io.BytesIO(image_bytes))
+                
+                # Extract the chinese_text from PNG info/metadata
+                chinese_text = img.info.get('chinese_text', '')
+                
+                if not chinese_text:
+                    await interaction.followup.send("Could not find Chinese text in image metadata.", ephemeral=True)
+                    return
+                
+                print(f"Extracted Chinese text from image: {chinese_text}")
+                
+            except Exception as e:
+                print(f"Error reading image metadata: {e}")
+                await interaction.followup.send("Could not read image metadata.", ephemeral=True)
+                return
+            
+            # Generate audio using the extracted Chinese text
             audio_path = create_audio(chinese_text)
             
             if audio_path:
@@ -764,14 +779,14 @@ class AudioButtonView(discord.ui.View):
                     os.unlink(audio_path)
                     
                 except Exception as e:
+                    print(f"Error sending audio file: {e}")
                     await interaction.followup.send("Sorry, couldn't send audio file.", ephemeral=True)
             else:
                 await interaction.followup.send("Sorry, couldn't generate audio.", ephemeral=True)
                 
         except Exception as e:
-            print(f"Error extracting text from filename: {e}")
-            await interaction.followup.send("Sorry, couldn't extract text from image filename.", ephemeral=True)
-
+            print(f"Error in play_audio: {e}")
+            await interaction.followup.send("Sorry, there was an error generating audio.", ephemeral=True)
 def create_audio(text):
     """Create audio file for Chinese text."""
     try:
