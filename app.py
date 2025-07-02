@@ -18,6 +18,8 @@ from google.oauth2 import service_account
 from gtts import gTTS
 from pydub import AudioSegment
 import tempfile
+import base64
+
 
 # Set matplotlib cache directory to a writable location
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
