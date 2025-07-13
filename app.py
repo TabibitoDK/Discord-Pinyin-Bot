@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands
 import matplotlib.pyplot as plt
 from pypinyin import pinyin, Style
-from googletrans import Translator
+import anthropic
 import io
 import os
 import asyncio
@@ -323,10 +323,26 @@ def get_pinyin_for_segments(segments):
     return result_segments
 
 def translate_chinese_to_japanese(text):
-    translator = Translator()
     try:
-        result = translator.translate(text, src='zh-cn', dest='ja')
-        return result.text
+        # Initialize Anthropic client
+        client = anthropic.Anthropic(
+            api_key=os.getenv('ANTHROPIC_API_KEY')
+        )
+        
+        # Create translation prompt
+        prompt = f"Translate the following Chinese text to Japanese. Only return the Japanese translation, no explanations: {text}"
+        
+        # Get translation from Claude
+        message = client.messages.create(
+            model="claude-3-haiku-20240307",  # Using Haiku for cost efficiency
+            max_tokens=1000,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        
+        return message.content[0].text.strip()
+        
     except Exception as e:
         print(f"Translation error: {e}")
         return "Translation failed"
@@ -820,6 +836,19 @@ Please set your Discord bot token in the environment variables.
     except Exception as e:
         print(f"❌ CRITICAL ERROR running bot: {e}")
         raise e
+    
+
+    anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+    if not anthropic_key:
+        error_msg = """
+    ❌ ANTHROPIC API KEY MISSING ❌
+
+    ANTHROPIC_API_KEY environment variable not set!
+
+    Please set your Anthropic API key in the environment variables.
+    """
+        print(error_msg)
+        raise Exception("ANTHROPIC_API_KEY environment variable not set!")
 
 if __name__ == "__main__":
     print("🔥 Starting Chinese Pinyin Discord Bot (Firestore Required)")
