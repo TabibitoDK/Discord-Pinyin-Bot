@@ -1,7 +1,6 @@
 discord.py==2.3.2
 matplotlib==3.8.4
 pypinyin==0.49.0
-googletrans==4.0.0rc1
 flask==2.3.3
 numpy<2.0.0
 pillow>=9.0.0
