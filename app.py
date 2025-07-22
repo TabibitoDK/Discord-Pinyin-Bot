@@ -20,6 +20,8 @@ from pydub import AudioSegment
 import tempfile
 from PIL import Image
 import io
+import time
+import aiohttp
 
 # Set matplotlib cache directory to a writable location
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
@@ -830,12 +832,25 @@ Please set your Discord bot token in the environment variables.
         print(error_msg)
         raise Exception("DISCORD_TOKEN environment variable not set!")
     
-    try:
-        print("🚀 Starting Discord bot...")
-        bot.run(token)
-    except Exception as e:
-        print(f"❌ CRITICAL ERROR running bot: {e}")
-        raise e
+    max_retries = 5
+    retry_delay = 10
+
+    for attempt in range(max_retries):
+        try:
+            print(f"🚀 Starting Discord bot (attempt {attempt + 1}/{max_retries})...")
+            bot.run(token)
+            break
+        except aiohttp.client_exceptions.ClientConnectorDNSError as e:
+            print(f"❌ DNS error on attempt {attempt + 1}: {e}")
+            if attempt < max_retries - 1:
+                print(f"⏳ Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)  # Use time.sleep, not await
+                retry_delay *= 2  # Exponential backoff
+            else:
+                raise e
+        except Exception as e:
+            print(f"❌ CRITICAL ERROR running bot: {e}")
+            raise e
     
 
     anthropic_key = os.getenv('ANTHROPIC_API_KEY')
@@ -858,5 +873,16 @@ if __name__ == "__main__":
     flask_thread.start()
     print("🌐 Flask health check server started")
     
+    # Test network connectivity before starting bot
+    try:
+        import socket
+        socket.gethostbyname('discord.com')
+        print("✅ Network connectivity to discord.com confirmed")
+    except socket.gaierror:
+        print("❌ Cannot resolve discord.com - network connectivity issue")
+        print("⏳ Waiting 30 seconds before retry...")
+        time.sleep(30)  # Use time.sleep instead of await asyncio.sleep
+        # Try again or raise exception
+
     # Run the Discord bot
     run_bot()

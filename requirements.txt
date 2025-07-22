@@ -12,3 +12,4 @@ google-oauth2-tool==0.0.3
 gTTS==2.3.2
 pydub==0.25.1
 Pillow>=10.0.0
+aiohttp==3.8.6
